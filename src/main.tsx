@@ -9,8 +9,10 @@ import {
   ChevronsRight,
   Download,
   FileUp,
+  Globe,
   Image,
   Images,
+  Linkedin,
   LoaderCircle,
   Monitor,
   Moon,
@@ -18,6 +20,7 @@ import {
   Search,
   SlidersHorizontal,
   Sun,
+  Twitter,
   X,
 } from "lucide-react";
 import "./styles.css";
@@ -229,7 +232,7 @@ function App() {
   );
   const [bulkOgImage, setBulkOgImage] = React.useState("");
   const [syncOg, setSyncOg] = React.useState(true);
-  const [bulkSections, setBulkSections] = React.useState<string[]>(["copy"]);
+  const [bulkSections, setBulkSections] = React.useState<string[]>([]);
   const importInputRef = React.useRef<HTMLInputElement | null>(null);
   const [isConnected, setIsConnected] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(true);
@@ -594,7 +597,7 @@ function App() {
                   Select all
                 </button>
                 <button className="ghost-button" onClick={() => setSelectedIds([])}>
-                  Clear
+                  Deselect all
                 </button>
               </div>
 
@@ -643,6 +646,15 @@ function App() {
                       </button>
                     ),
                   )}
+              </div>
+
+              <div className="creator-links" aria-label="Creator links">
+                <span>Built by <a href="https://www.airdokan.com/" target="_blank" rel="noreferrer">Airdokan</a></span>
+                <div>
+                  <a href="https://www.airdokan.com/" target="_blank" rel="noreferrer"><Globe size={13} /> Website</a>
+                  <a href="https://x.com/bashar_me1" target="_blank" rel="noreferrer"><Twitter size={13} /> X</a>
+                  <a href="https://www.linkedin.com/in/findbashar/" target="_blank" rel="noreferrer"><Linkedin size={13} /> LinkedIn</a>
+                </div>
               </div>
             </>
           )}
@@ -781,6 +793,15 @@ function SingleEditor({
   onSaveSelected: () => void;
   onPickAsset: () => void;
 }) {
+  const [openSections, setOpenSections] = React.useState<string[]>(["seo"]);
+  const allOpen = openSections.length === 3;
+
+  function toggleSection(section: string) {
+    setOpenSections((current) =>
+      current.includes(section) ? current.filter((item) => item !== section) : [...current, section],
+    );
+  }
+
   return (
     <>
       <div className="editor-heading">
@@ -801,61 +822,94 @@ function SingleEditor({
         </div>
       </div>
 
-      <div className="field-grid">
-        <TextField
-          label="SEO title"
-          value={page.seoTitle}
-          recommended="Aim for 30-60 characters."
-          tip={titleTip(page.seoTitle)}
-          onChange={(seoTitle) => onPatch({ seoTitle })}
-        />
-        <TextField
-          label="Meta description"
-          value={page.metaDescription}
-          multiline
-          recommended="Aim for 120-160 characters."
-          tip={descriptionTip(page.metaDescription)}
-          onChange={(metaDescription) => onPatch({ metaDescription })}
-        />
-        <label className="checkbox-row og-sync-row">
-          <input
-            type="checkbox"
-            checked={page.useSeoForOg}
-            onChange={(event) => {
-              const useSeoForOg = event.target.checked;
-              onPatch({
-                useSeoForOg,
-                ...(useSeoForOg ? { ogTitle: page.seoTitle, ogDescription: page.metaDescription } : {}),
-              });
-            }}
-          />
-          <span>Use SEO title and description for Open Graph</span>
-        </label>
-        <TextField
-          label="Open Graph title"
-          value={page.useSeoForOg ? page.seoTitle : page.ogTitle}
-          recommended="Usually this can match the SEO title."
-          tip={titleTip(page.useSeoForOg ? page.seoTitle : page.ogTitle)}
-          disabled={page.useSeoForOg}
-          onChange={(ogTitle) => onPatch({ ogTitle, useSeoForOg: false })}
-        />
-        <TextField
-          label="Open Graph description"
-          value={page.useSeoForOg ? page.metaDescription : page.ogDescription}
-          multiline
-          recommended="Keep it clear for social previews."
-          tip={descriptionTip(page.useSeoForOg ? page.metaDescription : page.ogDescription)}
-          disabled={page.useSeoForOg}
-          onChange={(ogDescription) => onPatch({ ogDescription, useSeoForOg: false })}
-        />
+      <div className="bulk-toolbar">
+        <button className="secondary-button" onClick={() => setOpenSections(allOpen ? [] : ["seo", "og", "image"])}>
+          {allOpen ? "Collapse all" : "Expand all"}
+        </button>
       </div>
 
-      <OgImageField
-        value={page.ogImage}
-        onChange={(ogImage) => onPatch({ ogImage })}
-        onPick={onPickAsset}
-        onClear={() => onPatch({ ogImage: "" })}
-      />
+      <div className="accordion-stack">
+        <AccordionSection
+          id="seo"
+          title="SEO title and description"
+          meta="Edit the search title and meta description for this page."
+          open={openSections.includes("seo")}
+          onToggle={toggleSection}
+        >
+          <TextField
+            label="SEO title"
+            value={page.seoTitle}
+            recommended="Aim for 30-60 characters."
+            tip={titleTip(page.seoTitle)}
+            onChange={(seoTitle) => onPatch({ seoTitle })}
+          />
+          <TextField
+            label="Meta description"
+            value={page.metaDescription}
+            multiline
+            recommended="Aim for 120-160 characters."
+            tip={descriptionTip(page.metaDescription)}
+            onChange={(metaDescription) => onPatch({ metaDescription })}
+          />
+        </AccordionSection>
+
+        <AccordionSection
+          id="og"
+          title="Open Graph title and description"
+          meta="Use SEO copy or customize the social preview text."
+          open={openSections.includes("og")}
+          onToggle={toggleSection}
+        >
+          <label className="checkbox-row og-sync-row">
+            <input
+              type="checkbox"
+              checked={page.useSeoForOg}
+              onChange={(event) => {
+                const useSeoForOg = event.target.checked;
+                onPatch({
+                  useSeoForOg,
+                  ...(useSeoForOg ? { ogTitle: page.seoTitle, ogDescription: page.metaDescription } : {}),
+                });
+              }}
+            />
+            <span>Use SEO title and description for Open Graph</span>
+          </label>
+          <TextField
+            label="Open Graph title"
+            value={page.useSeoForOg ? page.seoTitle : page.ogTitle}
+            recommended="Usually this can match the SEO title."
+            tip={titleTip(page.useSeoForOg ? page.seoTitle : page.ogTitle)}
+            disabled={page.useSeoForOg}
+            onChange={(ogTitle) => onPatch({ ogTitle, useSeoForOg: false })}
+          />
+          <TextField
+            label="Open Graph description"
+            value={page.useSeoForOg ? page.metaDescription : page.ogDescription}
+            multiline
+            recommended="Keep it clear for social previews."
+            tip={descriptionTip(page.useSeoForOg ? page.metaDescription : page.ogDescription)}
+            disabled={page.useSeoForOg}
+            onChange={(ogDescription) => onPatch({ ogDescription, useSeoForOg: false })}
+          />
+        </AccordionSection>
+
+        <AccordionSection
+          id="image"
+          title="Open Graph image"
+          meta="Choose from Webflow Assets or paste an image URL."
+          open={openSections.includes("image")}
+          onToggle={toggleSection}
+        >
+          <OgImageField
+            value={page.ogImage}
+            onChange={(ogImage) => onPatch({ ogImage })}
+            onPick={onPickAsset}
+            onClear={() => onPatch({ ogImage: "" })}
+            compact
+          />
+        </AccordionSection>
+      </div>
+
       <BottomBar
         label={selectedSaveLabel(selectedCount)}
         isSaving={isSaving}
