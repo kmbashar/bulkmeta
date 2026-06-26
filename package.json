@@ -1,0 +1,30 @@
+{
+  "name": "bulkseo-free-webflow-app",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -b && vite build",
+    "build:watch": "vite build --watch",
+    "preview": "vite preview --host 0.0.0.0",
+    "webflow:dev": "npm run build && concurrently \"npm run build:watch\" \"webflow extension serve 1337 --skip-update-check\"",
+    "webflow:serve": "npm run build && webflow extension serve 1337",
+    "webflow:bundle": "npm run build && webflow extension bundle"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@webflow/designer-extension-typings": "^2.1.1",
+    "@webflow/webflow-cli": "^2.1.1",
+    "concurrently": "^10.0.3"
+  }
+}
