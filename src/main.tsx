@@ -545,25 +545,27 @@ function App() {
           </button>
         </div>
 
-        <ThemeControl theme={theme} onTheme={setTheme} />
+        <div className="header-actions">
+          <ThemeControl theme={theme} onTheme={setTheme} />
 
-        <button className="icon-button header-icon" onClick={loadWebflowData} disabled={isLoading} title="Reload pages" aria-label="Reload pages">
-          {isLoading ? <LoaderCircle className="spin" size={16} /> : <RefreshCcw size={16} />}
-        </button>
+          <button className="icon-button header-icon" onClick={loadWebflowData} disabled={isLoading} title="Reload pages" aria-label="Reload pages">
+            {isLoading ? <LoaderCircle className="spin" size={16} /> : <RefreshCcw size={16} />}
+          </button>
 
-        <div className="csv-actions">
-          <button className="icon-button header-icon" onClick={() => importInputRef.current?.click()} title="Import CSV" aria-label="Import CSV">
-            <FileUp size={15} />
-          </button>
-          <button className="icon-button header-icon" onClick={exportCsv} title="Export CSV" aria-label="Export CSV">
-            <Download size={15} />
-          </button>
-          <input
-            ref={importInputRef}
-            type="file"
-            accept=".csv,text/csv"
-            onChange={(event) => importCsv(event.target.files?.[0] ?? null)}
-          />
+          <div className="csv-actions">
+            <button className="icon-button header-icon" onClick={() => importInputRef.current?.click()} title="Import CSV" aria-label="Import CSV">
+              <FileUp size={15} />
+            </button>
+            <button className="icon-button header-icon" onClick={exportCsv} title="Export CSV" aria-label="Export CSV">
+              <Download size={15} />
+            </button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(event) => importCsv(event.target.files?.[0] ?? null)}
+            />
+          </div>
         </div>
       </header>
 
@@ -649,11 +651,11 @@ function App() {
               </div>
 
               <div className="creator-links" aria-label="Creator links">
-                <span>Built by <a href="https://www.airdokan.com/" target="_blank" rel="noreferrer">Airdokan</a></span>
+                <span>Built by Airdokan</span>
                 <div>
-                  <a href="https://www.airdokan.com/" target="_blank" rel="noreferrer"><Globe size={13} /> Website</a>
-                  <a href="https://x.com/bashar_me1" target="_blank" rel="noreferrer"><Twitter size={13} /> X</a>
-                  <a href="https://www.linkedin.com/in/findbashar/" target="_blank" rel="noreferrer"><Linkedin size={13} /> LinkedIn</a>
+                  <a href="https://www.airdokan.com/" target="_blank" rel="noreferrer" aria-label="Airdokan website" title="Website"><Globe size={13} /></a>
+                  <a href="https://x.com/bashar_me1" target="_blank" rel="noreferrer" aria-label="Bashar on X" title="X"><Twitter size={13} /></a>
+                  <a href="https://www.linkedin.com/in/findbashar/" target="_blank" rel="noreferrer" aria-label="Bashar on LinkedIn" title="LinkedIn"><Linkedin size={13} /></a>
                 </div>
               </div>
             </>
@@ -705,6 +707,7 @@ function App() {
               onSave={saveBulkPages}
             />
           )}
+
         </section>
       </main>
 
@@ -733,17 +736,14 @@ function App() {
 }
 
 function ThemeControl({ theme, onTheme }: { theme: ThemeChoice; onTheme: (theme: ThemeChoice) => void }) {
+  const nextTheme: ThemeChoice = theme === "system" ? "light" : theme === "light" ? "dark" : "system";
+  const label = "Theme: " + theme + ". Click for " + nextTheme + ".";
   return (
-    <label className="theme-control" title="Theme preference">
-      {theme === "system" && <Monitor size={14} />}
-      {theme === "light" && <Sun size={14} />}
-      {theme === "dark" && <Moon size={14} />}
-      <select value={theme} onChange={(event) => onTheme(event.target.value as ThemeChoice)} aria-label="Theme preference">
-        <option value="system">System</option>
-        <option value="light">Light</option>
-        <option value="dark">Dark</option>
-      </select>
-    </label>
+    <button className="theme-button header-icon" onClick={() => onTheme(nextTheme)} title={label} aria-label={label}>
+      {theme === "system" && <Monitor size={15} />}
+      {theme === "light" && <Sun size={15} />}
+      {theme === "dark" && <Moon size={15} />}
+    </button>
   );
 }
 
@@ -1342,7 +1342,7 @@ function selectedSaveLabel(count: number) {
   return `Save ${count} selected page${count === 1 ? "" : "s"}`;
 }
 
-function formatSlug(page: SeoPage) {
+function formatSlug(page: { slug: string; url: string }) {
   if (page.slug) return page.slug.startsWith("/") ? page.slug : `/${page.slug}`;
   return page.url || "Page";
 }

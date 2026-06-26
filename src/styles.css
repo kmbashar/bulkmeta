@@ -141,9 +141,9 @@ button:disabled {
 
 .app-header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   height: 68px;
   border-bottom: 1px solid var(--border);
   background: var(--surface-overlay);
@@ -194,6 +194,7 @@ button:disabled {
 
 .mode-switch {
   display: flex;
+  justify-self: center;
   border: 1px solid var(--primary-border);
   border-radius: 10px;
   background: var(--primary-subtle);
@@ -206,7 +207,7 @@ button:disabled {
   border-radius: 8px;
   background: transparent;
   color: var(--button-text);
-  padding: 0 14px;
+  padding: 0 13px;
   font-size: 12px;
   font-weight: 900;
 }
@@ -308,48 +309,39 @@ button:disabled {
   outline: none;
 }
 
+.header-actions,
 .csv-actions {
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
+.header-actions {
+  justify-self: end;
+}
+
 .csv-actions input {
   display: none;
 }
 
-.theme-control {
-  display: inline-flex;
-  position: relative;
+.theme-button {
+  display: inline-grid;
+  width: 34px;
   height: 34px;
-  min-width: 108px;
-  align-items: center;
-  gap: 5px;
+  min-height: 34px;
+  place-items: center;
   border: 1px solid var(--border-strong);
   border-radius: 7px;
   background: var(--surface);
   color: var(--button-text);
-  padding: 0 7px;
+  padding: 0;
   box-shadow: var(--shadow-xs);
 }
 
-.theme-control select {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 800;
-  outline: none;
-  padding: 0 26px 0 34px;
-}
-
-.theme-control option {
-  background: var(--surface);
-  color: var(--text);
+.theme-button:hover {
+  border-color: var(--primary-border);
+  background: var(--primary-subtle);
+  color: var(--primary);
 }
 
 .select-row,
@@ -431,11 +423,13 @@ button:disabled {
 }
 
 .creator-links {
-  display: grid;
+  display: flex;
   flex: 0 0 auto;
-  gap: 7px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   border-top: 1px solid var(--border);
-  padding-top: 10px;
+  padding-top: 8px;
   color: var(--tertiary);
   font-size: 10px;
 }
@@ -451,21 +445,20 @@ button:disabled {
 
 .creator-links div {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex: 0 0 auto;
+  gap: 4px;
 }
 
 .creator-links a {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--surface-raised);
   color: var(--button-text);
-  padding: 5px 7px;
-  font-size: 10px;
-  font-weight: 800;
+  padding: 0;
   line-height: 1;
   text-decoration: none;
 }
@@ -1411,3 +1404,4 @@ code {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
