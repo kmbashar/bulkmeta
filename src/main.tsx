@@ -9,14 +9,17 @@ import {
   ChevronsRight,
   Download,
   FileUp,
+  Globe,
   Image,
   Images,
+  Linkedin,
   LoaderCircle,
   Moon,
   RefreshCcw,
   Search,
   SlidersHorizontal,
   Sun,
+  Twitter,
   X,
 } from "lucide-react";
 import "./styles.css";
@@ -583,7 +586,14 @@ function App() {
                   )}
               </div>
 
-
+              <div className="creator-links" aria-label="Creator links">
+                <span>Built by Airdokan</span>
+                <div>
+                  <a href="https://www.airdokan.com/" target="_blank" rel="noreferrer" aria-label="Airdokan website" title="Website"><Globe size={13} /></a>
+                  <a href="https://x.com/bashar_me1" target="_blank" rel="noreferrer" aria-label="Bashar on X" title="X"><Twitter size={13} /></a>
+                  <a href="https://www.linkedin.com/in/findbashar/" target="_blank" rel="noreferrer" aria-label="Bashar on LinkedIn" title="LinkedIn"><Linkedin size={13} /></a>
+                </div>
+              </div>
             </>
           )}
         </aside>
