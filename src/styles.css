@@ -1,4 +1,10 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url(./fonts/Inter.woff2) format("woff2");
+}
 
 :root {
   --bg: #f8fafc;
@@ -422,53 +428,6 @@ button:disabled {
   text-transform: uppercase;
 }
 
-.creator-links {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  border-top: 1px solid var(--border);
-  padding-top: 8px;
-  color: var(--tertiary);
-  font-size: 10px;
-}
-
-.creator-links span,
-.creator-links div {
-  min-width: 0;
-}
-
-.creator-links span {
-  line-height: 1.35;
-}
-
-.creator-links div {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 4px;
-}
-
-.creator-links a {
-  display: inline-grid;
-  width: 24px;
-  height: 24px;
-  place-items: center;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-raised);
-  color: var(--button-text);
-  padding: 0;
-  line-height: 1;
-  text-decoration: none;
-}
-
-.creator-links a:hover {
-  border-color: var(--primary-border);
-  background: var(--primary-subtle);
-  color: var(--primary);
-}
-
 .page-item {
   display: grid;
   grid-template-columns: 16px 1fr 14px;
@@ -628,11 +587,6 @@ button:disabled {
 
 .heading-actions > button {
   flex: 0 0 auto;
-}
-
-.heading-actions .save-hint {
-  flex: 1 1 100%;
-  margin-left: auto;
 }
 
 .eyebrow {
@@ -1307,23 +1261,22 @@ code {
 }
 
 .save-hint {
-  display: inline-flex;
-  max-width: 360px;
+  display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  border: 1px solid #fedf89;
-  border-radius: 7px;
+  border-bottom: 1px solid #fedf89;
   background: #fffaeb;
   color: #b54708;
-  padding: 6px 8px;
+  padding: 6px 12px;
   font-size: 11px;
   font-weight: 700;
   line-height: 1.35;
-  text-align: left;
+  text-align: center;
 }
 
 :root[data-theme="dark"] .save-hint {
-  border-color: rgba(253, 176, 34, 0.44);
+  border-bottom-color: rgba(253, 176, 34, 0.44);
   background: rgba(253, 176, 34, 0.12);
   color: #fdb022;
 }

@@ -9,18 +9,14 @@ import {
   ChevronsRight,
   Download,
   FileUp,
-  Globe,
   Image,
   Images,
-  Linkedin,
   LoaderCircle,
-  Monitor,
   Moon,
   RefreshCcw,
   Search,
   SlidersHorizontal,
   Sun,
-  Twitter,
   X,
 } from "lucide-react";
 import "./styles.css";
@@ -130,68 +126,8 @@ type AssetItem = {
   mimeType: string;
 };
 
-type ThemeChoice = "system" | "light" | "dark";
+type ThemeChoice = "light" | "dark";
 type SortChoice = "grouped" | "az" | "za";
-
-const themeStorageKey = "bulkmeta-theme";
-const sortStorageKey = "bulkmeta-page-sort";
-
-const demoPages: SeoPage[] = [
-  {
-    id: "home",
-    name: "Home",
-    slug: "/",
-    url: "https://example.webflow.io/",
-    groupLabel: "Static pages",
-    seoTitle: "Home - SEO Title",
-    metaDescription: "A clear homepage description that explains the page and invites the right visitor to click.",
-    ogTitle: "Home - SEO Title",
-    ogDescription: "A clear homepage description that explains the page and invites the right visitor to click.",
-    ogImage: "",
-    useSeoForOg: true,
-  },
-  {
-    id: "course",
-    name: "Course",
-    slug: "/course",
-    url: "https://example.webflow.io/course",
-    groupLabel: "Static pages",
-    seoTitle: "",
-    metaDescription: "",
-    ogTitle: "",
-    ogDescription: "",
-    ogImage: "",
-    useSeoForOg: true,
-  },
-  {
-    id: "about",
-    name: "About",
-    slug: "/about",
-    url: "https://example.webflow.io/about",
-    groupLabel: "Static pages",
-    seoTitle: "",
-    metaDescription: "",
-    ogTitle: "",
-    ogDescription: "",
-    ogImage: "",
-    useSeoForOg: true,
-  },
-];
-
-const demoAssets: AssetItem[] = [
-  {
-    id: "asset-1",
-    name: "Brand OG image",
-    url: "https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=1200&h=630&fit=crop",
-    mimeType: "image/jpeg",
-  },
-  {
-    id: "asset-2",
-    name: "Course preview image",
-    url: "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=1200&h=630&fit=crop",
-    mimeType: "image/jpeg",
-  },
-];
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { message: string | null }> {
   constructor(props: { children: React.ReactNode }) {
@@ -238,9 +174,10 @@ function App() {
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSaving, setIsSaving] = React.useState(false);
   const [toast, setToast] = React.useState("");
-  const [theme, setTheme] = React.useState<ThemeChoice>(() => readStoredTheme());
-  const [pageSort, setPageSort] = React.useState<SortChoice>(() => readStoredSort());
-  const [systemTheme, setSystemTheme] = React.useState<"light" | "dark">(() => getSystemTheme());
+  const [theme, setTheme] = React.useState<ThemeChoice>(
+    () => window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
+  );
+  const [pageSort, setPageSort] = React.useState<SortChoice>("grouped");
 
   const selectedPage = pages.find((page) => page.id === selectedPageId) ?? pages[0];
   const sortedPages = sortPagesForSidebar(pages, pageSort);
@@ -263,28 +200,11 @@ function App() {
   }, []);
 
   React.useEffect(() => {
-    const query = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = (event: MediaQueryListEvent) => setSystemTheme(event.matches ? "dark" : "light");
-    query.addEventListener("change", onChange);
-    return () => query.removeEventListener("change", onChange);
-  }, []);
-
-  React.useEffect(() => {
-    const resolvedTheme = theme === "system" ? systemTheme : theme;
-    document.documentElement.dataset.theme = resolvedTheme;
-    window.localStorage.setItem(themeStorageKey, theme);
-  }, [systemTheme, theme]);
-
-  React.useEffect(() => {
-    window.localStorage.setItem(sortStorageKey, pageSort);
-  }, [pageSort]);
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
 
   async function loadWebflowData() {
     if (!window.webflow?.getAllPagesAndFolders) {
-      setPages(demoPages);
-      setAssets(demoAssets);
-      setSelectedIds(demoPages.map((page) => page.id));
-      setSelectedPageId(demoPages[0]?.id ?? "");
       setIsConnected(false);
       setIsLoading(false);
       return;
@@ -396,7 +316,10 @@ function App() {
       patch.ogDescription = bulkDescription;
       patch.useSeoForOg = true;
     }
-    if (bulkOgImage) patch.ogImage = bulkOgImage;
+    if (bulkOgImage) {
+      const validation = validateImageUrl(bulkOgImage);
+      if (validation.valid) patch.ogImage = bulkOgImage;
+    }
     return { ...page, ...patch };
   }
 
@@ -431,7 +354,12 @@ function App() {
           await ref.setOpenGraphTitle?.(page.ogTitle || null);
           await ref.setOpenGraphDescription?.(page.ogDescription || null);
         }
-        await ref.setOpenGraphImage?.(page.ogImage || null);
+        const urlValidation = validateImageUrl(page.ogImage);
+        if (urlValidation.valid) {
+          await ref.setOpenGraphImage?.(page.ogImage || null);
+        } else {
+          showToast(urlValidation.error ?? "Skipped invalid OG image URL.");
+        }
         saved += 1;
       }
       const message = `${saved} page${saved === 1 ? "" : "s"} updated in Webflow.`;
@@ -478,6 +406,11 @@ function App() {
   }
 
   function chooseAsset(asset: AssetItem) {
+    const validation = validateImageUrl(asset.url);
+    if (!validation.valid) {
+      showToast(validation.error ?? "Invalid image URL.");
+      return;
+    }
     if (assetPickerTarget === "single" && selectedPage) {
       patchPage(selectedPage.id, { ogImage: asset.url });
     }
@@ -650,14 +583,7 @@ function App() {
                   )}
               </div>
 
-              <div className="creator-links" aria-label="Creator links">
-                <span>Built by Airdokan</span>
-                <div>
-                  <a href="https://www.airdokan.com/" target="_blank" rel="noreferrer" aria-label="Airdokan website" title="Website"><Globe size={13} /></a>
-                  <a href="https://x.com/bashar_me1" target="_blank" rel="noreferrer" aria-label="Bashar on X" title="X"><Twitter size={13} /></a>
-                  <a href="https://www.linkedin.com/in/findbashar/" target="_blank" rel="noreferrer" aria-label="Bashar on LinkedIn" title="LinkedIn"><Linkedin size={13} /></a>
-                </div>
-              </div>
+
             </>
           )}
         </aside>
@@ -736,11 +662,10 @@ function App() {
 }
 
 function ThemeControl({ theme, onTheme }: { theme: ThemeChoice; onTheme: (theme: ThemeChoice) => void }) {
-  const nextTheme: ThemeChoice = theme === "system" ? "light" : theme === "light" ? "dark" : "system";
+  const nextTheme: ThemeChoice = theme === "light" ? "dark" : "light";
   const label = "Theme: " + theme + ". Click for " + nextTheme + ".";
   return (
     <button className="theme-button header-icon" onClick={() => onTheme(nextTheme)} title={label} aria-label={label}>
-      {theme === "system" && <Monitor size={15} />}
       {theme === "light" && <Sun size={15} />}
       {theme === "dark" && <Moon size={15} />}
     </button>
@@ -793,7 +718,7 @@ function SingleEditor({
   onSaveSelected: () => void;
   onPickAsset: () => void;
 }) {
-  const [openSections, setOpenSections] = React.useState<string[]>(["seo"]);
+  const [openSections, setOpenSections] = React.useState<string[]>([]);
   const allOpen = openSections.length === 3;
 
   function toggleSection(section: string) {
@@ -818,9 +743,9 @@ function SingleEditor({
             {isSaving ? <LoaderCircle className="spin" size={16} /> : <CheckSquare size={16} />}
             Save page
           </button>
-          {isSaving && <SaveHint />}
         </div>
       </div>
+      {isSaving && <SaveHint />}
 
       <div className="bulk-toolbar">
         <button className="secondary-button" onClick={() => setOpenSections(allOpen ? [] : ["seo", "og", "image"])}>
@@ -1011,9 +936,9 @@ function BulkEditor({
             {isSaving ? <LoaderCircle className="spin" size={16} /> : <CheckSquare size={16} />}
             {selectedSaveLabel(selectedCount)}
           </button>
-          {isSaving && <SaveHint />}
         </div>
       </div>
+      {isSaving && <SaveHint />}
 
       <div className="bulk-toolbar">
         <button className="secondary-button" onClick={allOpen ? onCollapseAll : onExpandAll}>
@@ -1041,7 +966,7 @@ function BulkEditor({
             Insert page name
           </button>
           <TextField
-            label="Bulk paragraph / description"
+            label="Bulk description template"
             value={description}
             multiline
             recommended="This updates the SEO description for every selected page."
@@ -1258,7 +1183,7 @@ function BottomBar({
   secondaryLabel?: string;
   onSecondary?: () => void;
 }) {
-  return (
+  return (<>
     <div className="bottom-save-bar">
       <div className="bottom-save-actions">
         {secondaryLabel && onSecondary && (
@@ -1271,9 +1196,9 @@ function BottomBar({
           {label}
         </button>
       </div>
-      {isSaving && <SaveHint />}
     </div>
-  );
+    {isSaving && <SaveHint />}
+  </>);
 }
 
 function SaveHint() {
@@ -1332,6 +1257,31 @@ function AssetPicker({
       </section>
     </div>
   );
+}
+
+function validateImageUrl(url: string): { valid: boolean; error?: string } {
+  if (!url) return { valid: true };
+
+  const trimmed = url.trim();
+
+  if (/^(javascript|data|file):/i.test(trimmed)) {
+    return { valid: false, error: "Unsupported URL scheme. Use an HTTPS image URL." };
+  }
+
+  if (trimmed.startsWith("//")) {
+    return { valid: false, error: "Protocol-relative URLs are not allowed. Use a full HTTPS URL." };
+  }
+
+  if (!/^https:/i.test(trimmed)) {
+    return { valid: false, error: "Only HTTPS URLs are allowed." };
+  }
+
+  const knownImageExts = /\.(apng|avif|bmp|gif|jpe?g|jxl|png|svg|webp)(\?|#|$)/i;
+  if (!knownImageExts.test(trimmed)) {
+    return { valid: false, error: "URL must point to an image file (e.g. .jpg, .png, .webp)." };
+  }
+
+  return { valid: true };
 }
 
 function renderTemplate(template: string, page: SeoPage) {
@@ -1522,20 +1472,6 @@ function downloadFile(filename: string, contents: string) {
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
-}
-
-function readStoredTheme(): ThemeChoice {
-  const stored = window.localStorage.getItem(themeStorageKey);
-  return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
-}
-
-function readStoredSort(): SortChoice {
-  const stored = window.localStorage.getItem(sortStorageKey);
-  return stored === "az" || stored === "za" || stored === "grouped" ? stored : "grouped";
-}
-
-function getSystemTheme() {
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 createRoot(document.getElementById("root")!).render(
