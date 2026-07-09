@@ -110,6 +110,11 @@ type SeoPage = {
   useSeoForOg: boolean;
 };
 
+type ToastState = {
+  message: string;
+  tone: "success" | "error";
+};
+
 type LoadedPage = SeoPage & {
   parentId: string | null;
   sourceIndex: number;
@@ -173,7 +178,7 @@ function App() {
   const [isConnected, setIsConnected] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSaving, setIsSaving] = React.useState(false);
-  const [toast, setToast] = React.useState("");
+  const [toast, setToast] = React.useState<ToastState | null>(null);
   const [theme, setTheme] = React.useState<ThemeChoice>(
     () => window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
   );
@@ -184,6 +189,9 @@ function App() {
   const visiblePages = sortedPages.filter((page) => page.name.toLowerCase().includes(query.trim().toLowerCase()));
   const sidebarRows = buildSidebarRows(visiblePages, query);
   const selectedPages = pages.filter((page) => selectedIds.includes(page.id));
+  const selectedPagesHaveInvalidOgImage = selectedPages.some((page) => !validateImageUrl(page.ogImage).valid);
+  const selectedPageHasInvalidOgImage = selectedPage ? !validateImageUrl(selectedPage.ogImage).valid : false;
+  const bulkOgImageIsInvalid = !validateImageUrl(bulkOgImage).valid;
   const visibleAssets = assets.filter((asset) => {
     const text = `${asset.name} ${asset.mimeType}`.toLowerCase();
     return asset.mimeType.startsWith("image/") && text.includes(assetQuery.trim().toLowerCase());
@@ -191,7 +199,7 @@ function App() {
 
   React.useEffect(() => {
     if (!toast) return;
-    const id = window.setTimeout(() => setToast(""), 3200);
+    const id = window.setTimeout(() => setToast(null), 3200);
     return () => window.clearTimeout(id);
   }, [toast]);
 
@@ -324,7 +332,7 @@ function App() {
     if (bulkOgImage) {
       const validation = validateImageUrl(bulkOgImage);
       if (!validation.valid) {
-        showToast(validation.error ?? "Use a valid HTTPS image URL for the OG image.");
+        showToast(validation.error ?? "Use a valid HTTPS image URL for the OG image.", "error");
         return;
       }
     }
@@ -336,7 +344,7 @@ function App() {
 
   async function savePages(ids: string[], overrides?: Map<string, SeoPage>) {
     if (!isConnected) {
-      showToast("Open this app through Webflow Designer to save page settings.");
+      showToast("Open this app through Webflow Designer to save page settings.", "error");
       return;
     }
 
@@ -347,7 +355,7 @@ function App() {
     const invalidPage = targetPages.find((page) => !validateImageUrl(page.ogImage).valid);
     if (invalidPage) {
       const validation = validateImageUrl(invalidPage.ogImage);
-      showToast(invalidPage.name + ": " + (validation.error ?? "Invalid Open Graph image URL."));
+      showToast(invalidPage.name + ": " + (validation.error ?? "Invalid Open Graph image URL."), "error");
       return;
     }
 
@@ -375,11 +383,11 @@ function App() {
         saved += 1;
       }
       const message = `${saved} page${saved === 1 ? "" : "s"} updated in Webflow.`;
-      showToast(message);
+      showToast(message, "success");
       await window.webflow?.notify?.({ type: "Success", message });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not save page settings.";
-      showToast(message);
+      showToast(message, "error");
       await window.webflow?.notify?.({ type: "Error", message });
     } finally {
       setIsSaving(false);
@@ -420,7 +428,7 @@ function App() {
   function chooseAsset(asset: AssetItem) {
     const validation = validateImageUrl(asset.url);
     if (!validation.valid) {
-      showToast(validation.error ?? "Invalid image URL.");
+      showToast(validation.error ?? "Invalid image URL.", "error");
       return;
     }
     const safeUrl = normalizeImageUrl(asset.url);
@@ -448,7 +456,7 @@ function App() {
     const parsed = parseCsv(await file.text());
     const imported = parsed.pages;
     if (!imported.length) {
-      showToast("No valid rows found in the CSV.");
+      showToast("No valid rows found in the CSV.", "error");
       return;
     }
     setPages((current) => {
@@ -467,8 +475,8 @@ function App() {
     showToast(imported.length + " CSV row" + (imported.length === 1 ? "" : "s") + " imported." + skipped);
   }
 
-  function showToast(message: string) {
-    setToast(message);
+  function showToast(message: string, tone: ToastState["tone"] = "success") {
+    setToast({ message, tone });
   }
 
   return (
@@ -613,6 +621,8 @@ function App() {
               onSave={() => savePages([selectedPage.id])}
               onSaveSelected={() => savePages(selectedIds)}
               onPickAsset={() => setAssetPickerTarget("single")}
+              saveDisabled={selectedPageHasInvalidOgImage}
+              saveSelectedDisabled={selectedPagesHaveInvalidOgImage}
             />
           )}
 
@@ -627,6 +637,7 @@ function App() {
               pages={pages}
               selectedIds={selectedIds}
               isSaving={isSaving}
+              saveDisabled={bulkOgImageIsInvalid}
               onTitle={setBulkTitle}
               onDescription={setBulkDescription}
               onOgImage={setBulkOgImage}
@@ -662,10 +673,10 @@ function App() {
       )}
 
       {toast && (
-        <div className="toast" role="status">
-          <Check size={16} />
-          {toast}
-          <button onClick={() => setToast("")} aria-label="Dismiss">
+        <div className={`toast ${toast.tone}`} role={toast.tone === "error" ? "alert" : "status"}>
+          {toast.tone === "error" ? <AlertCircle size={16} /> : <Check size={16} />}
+          {toast.message}
+          <button onClick={() => setToast(null)} aria-label="Dismiss">
             <X size={14} />
           </button>
         </div>
@@ -723,6 +734,8 @@ function SingleEditor({
   onSave,
   onSaveSelected,
   onPickAsset,
+  saveDisabled,
+  saveSelectedDisabled,
 }: {
   page: SeoPage;
   isSaving: boolean;
@@ -731,6 +744,8 @@ function SingleEditor({
   onSave: () => void;
   onSaveSelected: () => void;
   onPickAsset: () => void;
+  saveDisabled: boolean;
+  saveSelectedDisabled: boolean;
 }) {
   const [openSections, setOpenSections] = React.useState<string[]>([]);
   const allOpen = openSections.length === 3;
@@ -750,10 +765,10 @@ function SingleEditor({
           <p>{formatSlug(page)}</p>
         </div>
         <div className="heading-actions">
-          <button className="secondary-button" onClick={onSaveSelected} disabled={isSaving || selectedCount === 0}>
+          <button className="secondary-button" onClick={onSaveSelected} disabled={isSaving || selectedCount === 0 || saveSelectedDisabled}>
             {selectedSaveLabel(selectedCount)}
           </button>
-          <button className="primary-button" onClick={onSave} disabled={isSaving}>
+          <button className="primary-button" onClick={onSave} disabled={isSaving || saveDisabled}>
             {isSaving ? <LoaderCircle className="spin" size={16} /> : <CheckSquare size={16} />}
             Save page
           </button>
@@ -852,10 +867,11 @@ function SingleEditor({
       <BottomBar
         label={selectedSaveLabel(selectedCount)}
         isSaving={isSaving}
-        disabled={selectedCount === 0}
+        disabled={selectedCount === 0 || saveSelectedDisabled}
         onSave={onSaveSelected}
         secondaryLabel="Save current page"
         onSecondary={onSave}
+        secondaryDisabled={saveDisabled}
       />
     </>
   );
@@ -871,6 +887,7 @@ function BulkEditor({
   pages,
   selectedIds,
   isSaving,
+  saveDisabled,
   onTitle,
   onDescription,
   onOgImage,
@@ -895,6 +912,7 @@ function BulkEditor({
   pages: SeoPage[];
   selectedIds: string[];
   isSaving: boolean;
+  saveDisabled: boolean;
   onTitle: (value: string) => void;
   onDescription: (value: string) => void;
   onOgImage: (value: string) => void;
@@ -946,7 +964,7 @@ function BulkEditor({
           <p>Use <code>{"{page}"}</code> wherever the Webflow page name should appear.</p>
         </div>
         <div className="heading-actions">
-          <button className="primary-button" onClick={onSave} disabled={isSaving || selectedCount === 0}>
+          <button className="primary-button" onClick={onSave} disabled={isSaving || selectedCount === 0 || saveDisabled}>
             {isSaving ? <LoaderCircle className="spin" size={16} /> : <CheckSquare size={16} />}
             {selectedSaveLabel(selectedCount)}
           </button>
@@ -1058,7 +1076,7 @@ function BulkEditor({
         </div>
       </div>
 
-      <BottomBar label={selectedSaveLabel(selectedCount)} isSaving={isSaving} disabled={selectedCount === 0} onSave={onSave} />
+      <BottomBar label={selectedSaveLabel(selectedCount)} isSaving={isSaving} disabled={selectedCount === 0 || saveDisabled} onSave={onSave} />
     </>
   );
 }
@@ -1197,6 +1215,7 @@ function BottomBar({
   onSave,
   secondaryLabel,
   onSecondary,
+  secondaryDisabled,
 }: {
   label: string;
   isSaving: boolean;
@@ -1204,12 +1223,13 @@ function BottomBar({
   onSave: () => void;
   secondaryLabel?: string;
   onSecondary?: () => void;
+  secondaryDisabled?: boolean;
 }) {
   return (<>
     <div className="bottom-save-bar">
       <div className="bottom-save-actions">
         {secondaryLabel && onSecondary && (
-          <button className="secondary-button" onClick={onSecondary} disabled={isSaving}>
+          <button className="secondary-button" onClick={onSecondary} disabled={isSaving || secondaryDisabled}>
             {secondaryLabel}
           </button>
         )}

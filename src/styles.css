@@ -1274,6 +1274,18 @@ code {
   font-weight: 800;
 }
 
+.toast.error {
+  border-color: color-mix(in srgb, var(--danger) 48%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+  color: var(--danger);
+}
+
+.toast.success {
+  border-color: #abefc6;
+  background: var(--surface);
+  color: #067647;
+}
+
 .toast button {
   display: grid;
   width: 26px;
@@ -1399,4 +1411,3 @@ code {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
-
