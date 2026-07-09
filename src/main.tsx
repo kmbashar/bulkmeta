@@ -9,17 +9,14 @@ import {
   ChevronsRight,
   Download,
   FileUp,
-  Globe,
   Image,
   Images,
-  Linkedin,
   LoaderCircle,
   Moon,
   RefreshCcw,
   Search,
   SlidersHorizontal,
   Sun,
-  Twitter,
   X,
 } from "lucide-react";
 import "./styles.css";
@@ -319,14 +316,18 @@ function App() {
       patch.ogDescription = bulkDescription;
       patch.useSeoForOg = true;
     }
-    if (bulkOgImage) {
-      const validation = validateImageUrl(bulkOgImage);
-      if (validation.valid) patch.ogImage = bulkOgImage;
-    }
+    if (bulkOgImage) patch.ogImage = normalizeImageUrl(bulkOgImage);
     return { ...page, ...patch };
   }
 
   async function saveBulkPages() {
+    if (bulkOgImage) {
+      const validation = validateImageUrl(bulkOgImage);
+      if (!validation.valid) {
+        showToast(validation.error ?? "Use a valid HTTPS image URL for the OG image.");
+        return;
+      }
+    }
     const nextPages = pages.map((page) => (selectedIds.includes(page.id) ? buildBulkPage(page) : page));
     const pageMap = new Map(nextPages.map((page) => [page.id, page]));
     setPages(nextPages);
@@ -335,16 +336,25 @@ function App() {
 
   async function savePages(ids: string[], overrides?: Map<string, SeoPage>) {
     if (!isConnected) {
-      showToast("Demo mode only. Open through Webflow Designer to save real pages.");
+      showToast("Open this app through Webflow Designer to save page settings.");
       return;
     }
 
     const targetIds = Array.from(new Set(ids));
+    const targetPages = pages
+      .filter((item) => targetIds.includes(item.id))
+      .map((page) => overrides?.get(page.id) ?? page);
+    const invalidPage = targetPages.find((page) => !validateImageUrl(page.ogImage).valid);
+    if (invalidPage) {
+      const validation = validateImageUrl(invalidPage.ogImage);
+      showToast(invalidPage.name + ": " + (validation.error ?? "Invalid Open Graph image URL."));
+      return;
+    }
+
     setIsSaving(true);
     let saved = 0;
     try {
-      for (const existingPage of pages.filter((item) => targetIds.includes(item.id))) {
-        const page = overrides?.get(existingPage.id) ?? existingPage;
+      for (const page of targetPages) {
         const ref = pageRefs[page.id];
         if (!ref) continue;
         await saveSeoFields(ref, page);
@@ -358,11 +368,10 @@ function App() {
           await ref.setOpenGraphDescription?.(page.ogDescription || null);
         }
         const urlValidation = validateImageUrl(page.ogImage);
-        if (urlValidation.valid) {
-          await ref.setOpenGraphImage?.(page.ogImage || null);
-        } else {
-          showToast(urlValidation.error ?? "Skipped invalid OG image URL.");
+        if (!urlValidation.valid) {
+          throw new Error(page.name + ": " + (urlValidation.error ?? "Invalid Open Graph image URL."));
         }
+        await ref.setOpenGraphImage?.(normalizeImageUrl(page.ogImage) || null);
         saved += 1;
       }
       const message = `${saved} page${saved === 1 ? "" : "s"} updated in Webflow.`;
@@ -414,11 +423,12 @@ function App() {
       showToast(validation.error ?? "Invalid image URL.");
       return;
     }
+    const safeUrl = normalizeImageUrl(asset.url);
     if (assetPickerTarget === "single" && selectedPage) {
-      patchPage(selectedPage.id, { ogImage: asset.url });
+      patchPage(selectedPage.id, { ogImage: safeUrl });
     }
     if (assetPickerTarget === "bulk") {
-      setBulkOgImage(asset.url);
+      setBulkOgImage(safeUrl);
     }
     setAssetPickerTarget(null);
     setAssetQuery("");
@@ -435,7 +445,8 @@ function App() {
 
   async function importCsv(file: File | null) {
     if (!file) return;
-    const imported = parseCsv(await file.text());
+    const parsed = parseCsv(await file.text());
+    const imported = parsed.pages;
     if (!imported.length) {
       showToast("No valid rows found in the CSV.");
       return;
@@ -452,7 +463,8 @@ function App() {
       return next;
     });
     if (importInputRef.current) importInputRef.current.value = "";
-    showToast(`${imported.length} CSV row${imported.length === 1 ? "" : "s"} imported.`);
+    const skipped = parsed.invalidOgImageCount ? " " + parsed.invalidOgImageCount + " invalid OG image URL" + (parsed.invalidOgImageCount === 1 ? " was" : "s were") + " skipped." : "";
+    showToast(imported.length + " CSV row" + (imported.length === 1 ? "" : "s") + " imported." + skipped);
   }
 
   function showToast(message: string) {
@@ -586,14 +598,6 @@ function App() {
                   )}
               </div>
 
-              <div className="creator-links" aria-label="Creator links">
-                <span>Built by Airdokan</span>
-                <div>
-                  <a href="https://www.airdokan.com/" target="_blank" rel="noreferrer" aria-label="Airdokan website" title="Website"><Globe size={13} /></a>
-                  <a href="https://x.com/bashar_me1" target="_blank" rel="noreferrer" aria-label="Bashar on X" title="X"><Twitter size={13} /></a>
-                  <a href="https://www.linkedin.com/in/findbashar/" target="_blank" rel="noreferrer" aria-label="Bashar on LinkedIn" title="LinkedIn"><Linkedin size={13} /></a>
-                </div>
-              </div>
             </>
           )}
         </aside>
@@ -1155,15 +1159,17 @@ function OgImageField({
   onClear: () => void;
   compact?: boolean;
 }) {
+  const validation = validateImageUrl(value);
+  const safePreviewUrl = validation.valid ? normalizeImageUrl(value) : "";
   return (
     <div className={compact ? "og-field compact" : "og-field"}>
       <div>
         <strong>Open Graph image</strong>
-        <span>Select from assets or paste an image URL.</span>
+        <span>Select from assets or paste a direct HTTPS image URL.</span>
       </div>
-      {value ? <img src={value} alt="" /> : <div className="image-empty"><Image size={20} /></div>}
+      {safePreviewUrl ? <img src={safePreviewUrl} alt="" /> : <div className="image-empty"><Image size={20} /></div>}
       <div className="og-image-actions">
-        <input value={value} onChange={(event) => onChange(event.target.value)} placeholder="https://..." aria-label="Open Graph image URL" />
+        <input value={value} onChange={(event) => onChange(event.target.value)} placeholder="https://example.com/image.jpg" aria-label="Open Graph image URL" />
         <button className="secondary-button" onClick={onPick}>
           <Images size={16} />
           Choose image
@@ -1173,6 +1179,7 @@ function OgImageField({
             Clear
           </button>
         )}
+        {!validation.valid && <span className="field-error">{validation.error}</span>}
       </div>
     </div>
   );
@@ -1270,28 +1277,50 @@ function AssetPicker({
 }
 
 function validateImageUrl(url: string): { valid: boolean; error?: string } {
-  if (!url) return { valid: true };
-
   const trimmed = url.trim();
-
-  if (/^(javascript|data|file):/i.test(trimmed)) {
-    return { valid: false, error: "Unsupported URL scheme. Use an HTTPS image URL." };
-  }
+  if (!trimmed) return { valid: true };
 
   if (trimmed.startsWith("//")) {
-    return { valid: false, error: "Protocol-relative URLs are not allowed. Use a full HTTPS URL." };
+    return { valid: false, error: "Protocol-relative URLs are not allowed. Use a full HTTPS image URL." };
   }
 
-  if (!/^https:/i.test(trimmed)) {
-    return { valid: false, error: "Only HTTPS URLs are allowed." };
+  if (/^(javascript|data|file|blob):/i.test(trimmed)) {
+    return { valid: false, error: "Unsupported URL scheme. Use a direct HTTPS image URL." };
   }
 
-  const knownImageExts = /\.(apng|avif|bmp|gif|jpe?g|jxl|png|svg|webp)(\?|#|$)/i;
-  if (!knownImageExts.test(trimmed)) {
-    return { valid: false, error: "URL must point to an image file (e.g. .jpg, .png, .webp)." };
+  if (/\s|[\u0000-\u001f\u007f]/.test(trimmed)) {
+    return { valid: false, error: "Image URLs cannot contain spaces or control characters." };
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return { valid: false, error: "Enter a complete HTTPS image URL." };
+  }
+
+  if (parsed.protocol !== "https:") {
+    return { valid: false, error: "Only HTTPS image URLs are allowed." };
+  }
+
+  if (!parsed.hostname || parsed.username || parsed.password) {
+    return { valid: false, error: "Use a public HTTPS image URL without credentials." };
+  }
+
+  if (parsed.hash) {
+    return { valid: false, error: "Remove URL fragments from the image URL." };
+  }
+
+  const knownImageExts = /\.(apng|avif|bmp|gif|jpe?g|jxl|png|webp)$/i;
+  if (!knownImageExts.test(parsed.pathname)) {
+    return { valid: false, error: "URL must point directly to an image file, such as .jpg, .png, or .webp." };
   }
 
   return { valid: true };
+}
+
+function normalizeImageUrl(url: string) {
+  return url.trim();
 }
 
 function renderTemplate(template: string, page: SeoPage) {
@@ -1424,13 +1453,17 @@ function toCsv(rows: SeoPage[]) {
   return [headers.join(","), ...rows.map((row) => headers.map((header) => escapeCsv(String(row[header as keyof SeoPage] ?? ""))).join(","))].join("\n");
 }
 
-function parseCsv(text: string): SeoPage[] {
+function parseCsv(text: string): { pages: SeoPage[]; invalidOgImageCount: number } {
   const lines = text.trim().split(/\r?\n/).filter(Boolean);
-  if (lines.length < 2) return [];
+  if (lines.length < 2) return { pages: [], invalidOgImageCount: 0 };
   const headers = splitCsvLine(lines[0]);
-  return lines.slice(1).map((line, index) => {
+  let invalidOgImageCount = 0;
+  const pages = lines.slice(1).map((line, index) => {
     const values = splitCsvLine(line);
     const row = Object.fromEntries(headers.map((header, valueIndex) => [header, values[valueIndex] ?? ""]));
+    const rawOgImage = String(row.ogImage || "").trim();
+    const ogImage = validateImageUrl(rawOgImage).valid ? rawOgImage : "";
+    if (rawOgImage && !ogImage) invalidOgImageCount += 1;
     return {
       id: row.id || `csv-${index}-${row.name || row.slug || "page"}`,
       name: row.name || "Untitled page",
@@ -1441,10 +1474,11 @@ function parseCsv(text: string): SeoPage[] {
       metaDescription: row.metaDescription || "",
       ogTitle: row.ogTitle || "",
       ogDescription: row.ogDescription || "",
-      ogImage: row.ogImage || "",
+      ogImage,
       useSeoForOg: ["true", "1", "yes", ""].includes(String(row.useSeoForOg ?? "true").toLowerCase()),
     };
   });
+  return { pages, invalidOgImageCount };
 }
 
 function splitCsvLine(line: string) {
