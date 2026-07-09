@@ -1165,7 +1165,7 @@ function OgImageField({
     <div className={compact ? "og-field compact" : "og-field"}>
       <div>
         <strong>Open Graph image</strong>
-        <span>Select from assets or paste a direct HTTPS image URL.</span>
+        <span>Select from assets or paste a direct HTTPS JPG or PNG URL.</span>
       </div>
       {safePreviewUrl ? <img src={safePreviewUrl} alt="" /> : <div className="image-empty"><Image size={20} /></div>}
       <div className="og-image-actions">
@@ -1179,7 +1179,12 @@ function OgImageField({
             Clear
           </button>
         )}
-        {!validation.valid && <span className="field-error">{validation.error}</span>}
+        {!validation.valid && (
+          <span className="field-error" role="alert">
+            <AlertCircle size={13} />
+            {validation.error}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -1246,7 +1251,7 @@ function AssetPicker({
         <div className="modal-heading">
           <div>
             <h2>Choose OG image</h2>
-            <p>Images are loaded from the Webflow Assets panel.</p>
+            <p>Images are loaded from Webflow Assets. Only JPG and PNG can be used for Open Graph.</p>
           </div>
           <button className="icon-button" onClick={onClose} aria-label="Close image picker">
             <X size={18} />
@@ -1257,17 +1262,27 @@ function AssetPicker({
           <input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search assets" />
         </div>
         <div className="asset-grid">
-          {assets.map((asset) => (
-            <button className="asset-item" key={asset.id} onClick={() => onChoose(asset)}>
-              <img src={asset.url} alt="" />
-              <span>{asset.name}</span>
-            </button>
-          ))}
+          {assets.map((asset) => {
+            const validation = validateImageUrl(asset.url);
+            return (
+              <button
+                className={validation.valid ? "asset-item" : "asset-item disabled"}
+                key={asset.id}
+                onClick={() => validation.valid && onChoose(asset)}
+                disabled={!validation.valid}
+                title={validation.valid ? asset.name : validation.error}
+              >
+                <img src={asset.url} alt="" />
+                <span>{asset.name}</span>
+                {!validation.valid && <small>JPG or PNG only</small>}
+              </button>
+            );
+          })}
           {assets.length === 0 && (
             <div className="empty-state">
               <Image size={24} />
               <strong>No image assets found</strong>
-              <span>Upload images in Webflow Assets, then reload this app.</span>
+              <span>Upload JPG or PNG images in Webflow Assets, then reload this app.</span>
             </div>
           )}
         </div>
@@ -1311,9 +1326,9 @@ function validateImageUrl(url: string): { valid: boolean; error?: string } {
     return { valid: false, error: "Remove URL fragments from the image URL." };
   }
 
-  const knownImageExts = /\.(apng|avif|bmp|gif|jpe?g|jxl|png|webp)$/i;
-  if (!knownImageExts.test(parsed.pathname)) {
-    return { valid: false, error: "URL must point directly to an image file, such as .jpg, .png, or .webp." };
+  const supportedOgImageExts = /\.(jpe?g|png)$/i;
+  if (!supportedOgImageExts.test(parsed.pathname)) {
+    return { valid: false, error: "Open Graph images must be direct JPG or PNG files." };
   }
 
   return { valid: true };
