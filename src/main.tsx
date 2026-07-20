@@ -80,6 +80,7 @@ type WebflowPageMetadata = {
 type WebflowDesignerApi = {
   getAllPagesAndFolders?: () => Promise<WebflowPageRef[]>;
   getAllAssets?: () => Promise<WebflowAssetRef[]>;
+  subscribe?: (event: "currentpage", callback: (page: WebflowPageRef) => void) => () => void;
   notify?: (options: {
     type: "Success" | "Error" | "Info" | "Warning";
     message: string;
@@ -132,7 +133,12 @@ type AssetItem = {
 };
 
 type ThemeChoice = "light" | "dark";
-type SortChoice = "grouped" | "az" | "za";
+type SortChoice = "grouped" | "seo-status" | "az" | "za";
+
+type LoadOptions = {
+  silent?: boolean;
+  preserveEdits?: boolean;
+};
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { message: string | null }> {
   constructor(props: { children: React.ReactNode }) {
@@ -182,12 +188,15 @@ function App() {
   const [theme, setTheme] = React.useState<ThemeChoice>(
     () => window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
   );
-  const [pageSort, setPageSort] = React.useState<SortChoice>("grouped");
+  const [pageSort, setPageSort] = React.useState<SortChoice>("seo-status");
 
   const selectedPage = pages.find((page) => page.id === selectedPageId) ?? pages[0];
   const sortedPages = sortPagesForSidebar(pages, pageSort);
   const visiblePages = sortedPages.filter((page) => page.name.toLowerCase().includes(query.trim().toLowerCase()));
-  const sidebarRows = buildSidebarRows(visiblePages, query);
+  const visibleMissingTitlePages = visiblePages.filter(isMissingSeoTitle);
+  const visibleMissingDescriptionPages = visiblePages.filter(isMissingMetaDescription);
+  const visibleMissingSeoPages = visiblePages.filter(isMissingSeoCopy);
+  const sidebarRows = pageSort === "seo-status" ? buildSeoStatusRows(visiblePages) : buildSidebarRows(visiblePages, query);
   const selectedPages = pages.filter((page) => selectedIds.includes(page.id));
   const selectedPagesHaveInvalidOgImage = selectedPages.some((page) => !validateImageUrl(page.ogImage).valid);
   const selectedPageHasInvalidOgImage = selectedPage ? !validateImageUrl(selectedPage.ogImage).valid : false;
@@ -208,17 +217,36 @@ function App() {
   }, []);
 
   React.useEffect(() => {
+    if (!isConnected || isSaving) return;
+
+    const refreshPages = () => {
+      if (document.visibilityState !== "visible") return;
+      void loadWebflowData({ silent: true, preserveEdits: true });
+    };
+
+    const intervalId = window.setInterval(refreshPages, 8000);
+    const unsubscribeCurrentPage = window.webflow?.subscribe?.("currentpage", () => {
+      window.setTimeout(refreshPages, 600);
+    });
+
+    return () => {
+      window.clearInterval(intervalId);
+      unsubscribeCurrentPage?.();
+    };
+  }, [isConnected, isSaving, pages, selectedIds]);
+
+  React.useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
 
-  async function loadWebflowData() {
+  async function loadWebflowData(options: LoadOptions = {}) {
     if (!window.webflow?.getAllPagesAndFolders) {
       setIsConnected(false);
-      setIsLoading(false);
+      if (!options.silent) setIsLoading(false);
       return;
     }
 
-    setIsLoading(true);
+    if (!options.silent) setIsLoading(true);
     try {
       await window.webflow.setExtensionSize?.("large");
       const items = await window.webflow.getAllPagesAndFolders();
@@ -276,17 +304,27 @@ function App() {
       const orderedLoadedPages = sortPagesByWebflowSection(visibleLoadedPages);
 
       const loadedAssets = await loadAssets();
+      const nextPages = options.preserveEdits ? mergeRefreshedPages(orderedLoadedPages, pages) : orderedLoadedPages;
+      const previousSignature = pageListSignature(pages);
+      const nextSignature = pageListSignature(orderedLoadedPages);
+      const newPageCount = countNewPages(pages, orderedLoadedPages);
       setPageRefs(refs);
-      setPages(orderedLoadedPages);
+      if (!options.silent || previousSignature !== nextSignature) setPages(nextPages);
       setAssets(loadedAssets.length ? loadedAssets : []);
-      setSelectedIds(orderedLoadedPages.map((page) => page.id));
-      setSelectedPageId(orderedLoadedPages[0]?.id ?? "");
+      setSelectedIds((current) => reconcileSelectedIds(current, pages, nextPages, Boolean(options.preserveEdits)));
+      setSelectedPageId((current) =>
+        nextPages.some((page) => page.id === current) ? current : nextPages[0]?.id ?? "",
+      );
       setIsConnected(true);
-      showToast(`${orderedLoadedPages.length} pages loaded from Webflow.`);
+      if (!options.silent) {
+        showToast(`${orderedLoadedPages.length} pages loaded from Webflow.`);
+      } else if (newPageCount > 0) {
+        showToast(`${newPageCount} new page${newPageCount === 1 ? "" : "s"} added from Webflow.`);
+      }
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Could not load Webflow data.");
+      if (!options.silent) showToast(error instanceof Error ? error.message : "Could not load Webflow data.", "error");
     } finally {
-      setIsLoading(false);
+      if (!options.silent) setIsLoading(false);
     }
   }
 
@@ -446,6 +484,36 @@ function App() {
     setSelectedIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
   }
 
+  function selectVisibleMissingSeoPages(targetPages: SeoPage[], label: string) {
+    setSelectedIds(targetPages.map((page) => page.id));
+    showToast(`${targetPages.length} visible page${targetPages.length === 1 ? "" : "s"} selected for missing ${label}.`);
+  }
+
+  function applyQuickSelection(value: string) {
+    if (!value) return;
+    if (value === "all") {
+      setSelectedIds(visiblePages.map((page) => page.id));
+      showToast(`${visiblePages.length} visible page${visiblePages.length === 1 ? "" : "s"} selected.`);
+      return;
+    }
+    if (value === "none") {
+      setSelectedIds([]);
+      showToast("All pages deselected.");
+      return;
+    }
+    if (value === "missing-title") {
+      selectVisibleMissingSeoPages(visibleMissingTitlePages, "titles");
+      return;
+    }
+    if (value === "missing-description") {
+      selectVisibleMissingSeoPages(visibleMissingDescriptionPages, "descriptions");
+      return;
+    }
+    if (value === "missing-either") {
+      selectVisibleMissingSeoPages(visibleMissingSeoPages, "SEO copy");
+    }
+  }
+
   function exportCsv() {
     downloadFile("bulkmeta-pages.csv", toCsv(pages));
     showToast("CSV exported.");
@@ -504,7 +572,7 @@ function App() {
         <div className="header-actions">
           <ThemeControl theme={theme} onTheme={setTheme} />
 
-          <button className="icon-button header-icon" onClick={loadWebflowData} disabled={isLoading} title="Reload pages" aria-label="Reload pages">
+          <button className="icon-button header-icon" onClick={() => loadWebflowData()} disabled={isLoading} title="Reload pages" aria-label="Reload pages">
             {isLoading ? <LoaderCircle className="spin" size={16} /> : <RefreshCcw size={16} />}
           </button>
 
@@ -550,20 +618,34 @@ function App() {
 
           {!sidebarCollapsed && (
             <>
-              <div className="select-row">
-                <button className="ghost-button" onClick={() => setSelectedIds(visiblePages.map((page) => page.id))}>
-                  Select all
-                </button>
-                <button className="ghost-button" onClick={() => setSelectedIds([])}>
-                  Deselect all
-                </button>
-              </div>
+              <label className="quick-select-control">
+                <CheckSquare size={15} />
+                <span>Select pages</span>
+                <strong>Choose pages...</strong>
+                <select
+                  value=""
+                  onChange={(event) => {
+                    applyQuickSelection(event.target.value);
+                    event.currentTarget.value = "";
+                  }}
+                  aria-label="Select pages by SEO status"
+                >
+                  <option value="">Choose pages...</option>
+                  <option value="all">All visible ({visiblePages.length})</option>
+                  <option value="missing-title">Missing title ({visibleMissingTitlePages.length})</option>
+                  <option value="missing-description">Missing description ({visibleMissingDescriptionPages.length})</option>
+                  <option value="missing-either">Missing title or description ({visibleMissingSeoPages.length})</option>
+                  <option value="none">Deselect all</option>
+                </select>
+              </label>
 
               <label className="sort-control">
                 <SlidersHorizontal size={15} />
                 <span>Sort</span>
+                <strong>{sortLabel(pageSort)}</strong>
                 <select value={pageSort} onChange={(event) => setPageSort(event.target.value as SortChoice)}>
                   <option value="grouped">Grouped</option>
+                  <option value="seo-status">SEO status</option>
                   <option value="az">A-Z</option>
                   <option value="za">Z-A</option>
                 </select>
@@ -1362,13 +1444,83 @@ function renderTemplate(template: string, page: SeoPage) {
   return template.replace(/\{page\}/g, page.name).trim();
 }
 
+function isMissingSeoTitle(page: SeoPage) {
+  const title = normalizeComparableText(page.seoTitle);
+  return !title || title === normalizeComparableText(page.name);
+}
+
+function isMissingMetaDescription(page: SeoPage) {
+  return !page.metaDescription.trim();
+}
+
+function isMissingSeoCopy(page: SeoPage) {
+  return isMissingSeoTitle(page) || isMissingMetaDescription(page);
+}
+
+function normalizeComparableText(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 function selectedSaveLabel(count: number) {
   return `Save ${count} selected page${count === 1 ? "" : "s"}`;
+}
+
+function sortLabel(sort: SortChoice) {
+  if (sort === "seo-status") return "SEO status";
+  if (sort === "az") return "A-Z";
+  if (sort === "za") return "Z-A";
+  return "Grouped";
 }
 
 function formatSlug(page: { slug: string; url: string }) {
   if (page.slug) return page.slug.startsWith("/") ? page.slug : `/${page.slug}`;
   return page.url || "Page";
+}
+
+function mergeRefreshedPages(refreshedPages: SeoPage[], currentPages: SeoPage[]) {
+  const currentById = new Map(currentPages.map((page) => [page.id, page]));
+  return refreshedPages.map((page) => {
+    const current = currentById.get(page.id);
+    if (!current) return page;
+    return {
+      ...page,
+      seoTitle: current.seoTitle,
+      metaDescription: current.metaDescription,
+      ogTitle: current.ogTitle,
+      ogDescription: current.ogDescription,
+      ogImage: current.ogImage,
+      useSeoForOg: current.useSeoForOg,
+    };
+  });
+}
+
+function reconcileSelectedIds(
+  currentSelectedIds: string[],
+  previousPages: SeoPage[],
+  nextPages: SeoPage[],
+  preserveSelection: boolean,
+) {
+  if (!preserveSelection) return nextPages.map((page) => page.id);
+  const nextIds = new Set(nextPages.map((page) => page.id));
+  const hadEveryPageSelected =
+    previousPages.length > 0 && previousPages.every((page) => currentSelectedIds.includes(page.id));
+  const nextSelectedIds = hadEveryPageSelected
+    ? nextPages.map((page) => page.id)
+    : currentSelectedIds.filter((id) => nextIds.has(id));
+  return arraysEqual(currentSelectedIds, nextSelectedIds) ? currentSelectedIds : nextSelectedIds;
+}
+
+function pageListSignature(pages: SeoPage[]) {
+  return pages.map((page) => `${page.id}:${page.name}:${page.slug}:${page.groupLabel}`).join("|");
+}
+
+function countNewPages(previousPages: SeoPage[], nextPages: SeoPage[]) {
+  const previousIds = new Set(previousPages.map((page) => page.id));
+  return nextPages.filter((page) => !previousIds.has(page.id)).length;
+}
+
+function arraysEqual(first: string[], second: string[]) {
+  return first.length === second.length && first.every((item, index) => item === second[index]);
 }
 
 function orderPagesLikeWebflow(items: WebflowPageRef[], pages: LoadedPage[]): SeoPage[] {
@@ -1427,6 +1579,40 @@ function buildSidebarRows(pages: SeoPage[], query: string): SidebarRow[] {
   }
 
   return rows;
+}
+
+function buildSeoStatusRows(pages: SeoPage[]): SidebarRow[] {
+  const groups = [
+    {
+      id: "missing-title-description",
+      label: "Missing title and description",
+      pages: pages.filter((page) => isMissingSeoTitle(page) && isMissingMetaDescription(page)),
+    },
+    {
+      id: "missing-description",
+      label: "Missing description",
+      pages: pages.filter((page) => !isMissingSeoTitle(page) && isMissingMetaDescription(page)),
+    },
+    {
+      id: "missing-title",
+      label: "Missing title",
+      pages: pages.filter((page) => isMissingSeoTitle(page) && !isMissingMetaDescription(page)),
+    },
+    {
+      id: "complete-seo",
+      label: "Complete SEO",
+      pages: pages.filter((page) => !isMissingSeoCopy(page)),
+    },
+  ];
+
+  return groups.flatMap((group) =>
+    group.pages.length
+      ? [
+          { type: "group" as const, id: group.id, label: `${group.label} (${group.pages.length})` },
+          ...group.pages.map((page) => ({ type: "page" as const, page })),
+        ]
+      : [],
+  );
 }
 
 function sortPagesForSidebar(pages: SeoPage[], sort: SortChoice) {
