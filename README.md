@@ -14,9 +14,9 @@
 - 🔗 Sync Open Graph title and description from SEO fields
 - 🖼️ Choose an Open Graph image from Webflow Assets or paste an image URL
 - 🔍 Search pages by page name
-- 📊 Sort pages by grouped order, A-Z, or Z-A
+- 📊 Sort pages by SEO status, grouped order, A-Z, or Z-A
 - 📥 Import and export page metadata as CSV
-- 🌓 Light, dark, and system theme support
+- 🌓 Light and dark theme support
 - ⚡ Inline save status with a warning to keep Webflow Page Settings closed while saving
 
 ## Requirements

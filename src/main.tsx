@@ -116,6 +116,23 @@ type ToastState = {
   tone: "success" | "error";
 };
 
+type SaveReport = {
+  success: string[];
+  failed: Array<{ id: string; name: string; message: string }>;
+  skipped: Array<{ id: string; name: string; message: string }>;
+};
+
+type CsvPagePatch = {
+  id: string;
+  patch: Partial<SeoPage>;
+};
+
+type CsvImportResult = {
+  rows: CsvPagePatch[];
+  invalidRows: string[];
+  skippedRows: string[];
+};
+
 type LoadedPage = SeoPage & {
   parentId: string | null;
   sourceIndex: number;
@@ -137,8 +154,9 @@ type SortChoice = "grouped" | "seo-status" | "az" | "za";
 
 type LoadOptions = {
   silent?: boolean;
-  preserveEdits?: boolean;
 };
+
+const SAVE_TIMEOUT_MS = 15000;
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { message: string | null }> {
   constructor(props: { children: React.ReactNode }) {
@@ -185,6 +203,7 @@ function App() {
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSaving, setIsSaving] = React.useState(false);
   const [toast, setToast] = React.useState<ToastState | null>(null);
+  const [saveReport, setSaveReport] = React.useState<SaveReport | null>(null);
   const [theme, setTheme] = React.useState<ThemeChoice>(
     () => window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
   );
@@ -217,23 +236,19 @@ function App() {
   }, []);
 
   React.useEffect(() => {
-    if (!isConnected || isSaving) return;
+    if (!isConnected) return;
 
-    const refreshPages = () => {
-      if (document.visibilityState !== "visible") return;
-      void loadWebflowData({ silent: true, preserveEdits: true });
-    };
-
-    const intervalId = window.setInterval(refreshPages, 8000);
     const unsubscribeCurrentPage = window.webflow?.subscribe?.("currentpage", () => {
-      window.setTimeout(refreshPages, 600);
+      if (isSaving || document.visibilityState !== "visible") return;
+      window.setTimeout(() => {
+        void loadWebflowData({ silent: true });
+      }, 800);
     });
 
     return () => {
-      window.clearInterval(intervalId);
       unsubscribeCurrentPage?.();
     };
-  }, [isConnected, isSaving, pages, selectedIds]);
+  }, [isConnected, isSaving]);
 
   React.useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -304,16 +319,15 @@ function App() {
       const orderedLoadedPages = sortPagesByWebflowSection(visibleLoadedPages);
 
       const loadedAssets = await loadAssets();
-      const nextPages = options.preserveEdits ? mergeRefreshedPages(orderedLoadedPages, pages) : orderedLoadedPages;
       const previousSignature = pageListSignature(pages);
       const nextSignature = pageListSignature(orderedLoadedPages);
       const newPageCount = countNewPages(pages, orderedLoadedPages);
       setPageRefs(refs);
-      if (!options.silent || previousSignature !== nextSignature) setPages(nextPages);
+      if (!options.silent || previousSignature !== nextSignature) setPages(orderedLoadedPages);
       setAssets(loadedAssets.length ? loadedAssets : []);
-      setSelectedIds((current) => reconcileSelectedIds(current, pages, nextPages, Boolean(options.preserveEdits)));
+      setSelectedIds((current) => reconcileSelectedIds(current, orderedLoadedPages));
       setSelectedPageId((current) =>
-        nextPages.some((page) => page.id === current) ? current : nextPages[0]?.id ?? "",
+        orderedLoadedPages.some((page) => page.id === current) ? current : orderedLoadedPages[0]?.id ?? "",
       );
       setIsConnected(true);
       if (!options.silent) {
@@ -376,7 +390,6 @@ function App() {
     }
     const nextPages = pages.map((page) => (selectedIds.includes(page.id) ? buildBulkPage(page) : page));
     const pageMap = new Map(nextPages.map((page) => [page.id, page]));
-    setPages(nextPages);
     await savePages(selectedIds, pageMap);
   }
 
@@ -398,31 +411,41 @@ function App() {
     }
 
     setIsSaving(true);
-    let saved = 0;
+    setSaveReport(null);
+    const report: SaveReport = { success: [], failed: [], skipped: [] };
     try {
       for (const page of targetPages) {
         const ref = pageRefs[page.id];
-        if (!ref) continue;
-        await saveSeoFields(ref, page);
-        if (page.useSeoForOg) {
-          await ref.useTitleAsOpenGraphTitle?.(true);
-          await ref.useDescriptionAsOpenGraphDescription?.(true);
-        } else {
-          await ref.useTitleAsOpenGraphTitle?.(false);
-          await ref.useDescriptionAsOpenGraphDescription?.(false);
-          await ref.setOpenGraphTitle?.(page.ogTitle || null);
-          await ref.setOpenGraphDescription?.(page.ogDescription || null);
+        if (!ref) {
+          report.skipped.push({ id: page.id, name: page.name, message: "Page reference was not available." });
+          continue;
         }
-        const urlValidation = validateImageUrl(page.ogImage);
-        if (!urlValidation.valid) {
-          throw new Error(page.name + ": " + (urlValidation.error ?? "Invalid Open Graph image URL."));
+        try {
+          await savePageSafely(ref, page);
+          report.success.push(page.id);
+        } catch (error) {
+          report.failed.push({
+            id: page.id,
+            name: page.name,
+            message: error instanceof Error ? error.message : "Could not save page settings.",
+          });
         }
-        await ref.setOpenGraphImage?.(normalizeImageUrl(page.ogImage) || null);
-        saved += 1;
       }
-      const message = `${saved} page${saved === 1 ? "" : "s"} updated in Webflow.`;
-      showToast(message, "success");
-      await window.webflow?.notify?.({ type: "Success", message });
+      const failedCount = report.failed.length;
+      const skippedCount = report.skipped.length;
+      const message = buildSaveSummary(report);
+      if (overrides && report.success.length) {
+        const savedIds = new Set(report.success);
+        setPages((current) =>
+          current.map((page) => {
+            const override = overrides.get(page.id);
+            return override && savedIds.has(page.id) ? override : page;
+          }),
+        );
+      }
+      setSaveReport(report);
+      showToast(message, failedCount || skippedCount ? "error" : "success");
+      await window.webflow?.notify?.({ type: failedCount ? "Error" : skippedCount ? "Warning" : "Success", message });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not save page settings.";
       showToast(message, "error");
@@ -432,35 +455,20 @@ function App() {
     }
   }
 
-  async function saveSeoFields(ref: WebflowPageRef, page: SeoPage) {
-    const title = page.seoTitle.trim();
-    const description = page.metaDescription.trim();
-    const isExcludedFromSearch = (await ref.isExcludedFromSearch?.()) ?? false;
+  async function savePageSafely(ref: WebflowPageRef, page: SeoPage) {
+    const previousMetadata = await readPageMetadata(ref);
+    const nextMetadata = buildPageMetadata(page, (await ref.isExcludedFromSearch?.()) ?? false);
 
-    if (!isExcludedFromSearch) {
-      await ref.useTitleAsSearchTitle?.(false);
-      await ref.useDescriptionAsSearchDescription?.(false);
-      await clearExistingSearchFields(ref);
+    try {
+      if (ref.setMetadata) {
+        await withTimeout(ref.setMetadata(nextMetadata), SAVE_TIMEOUT_MS, `Saving ${page.name} timed out.`);
+      } else {
+        await savePageWithIndividualSetters(ref, page, nextMetadata);
+      }
+    } catch (error) {
+      await restorePageMetadata(ref, previousMetadata).catch(() => null);
+      throw error;
     }
-
-    await clearExistingPageFields(ref);
-    await ref.setTitle?.(title || null);
-    await ref.setDescription?.(description || null);
-
-    if (!isExcludedFromSearch) {
-      await ref.setSearchTitle?.(title || null);
-      await ref.setSearchDescription?.(description || null);
-    }
-  }
-
-  async function clearExistingPageFields(ref: WebflowPageRef) {
-    await ref.setTitle?.(null).catch(() => null);
-    await ref.setDescription?.(null).catch(() => null);
-  }
-
-  async function clearExistingSearchFields(ref: WebflowPageRef) {
-    await ref.setSearchTitle?.(null).catch(() => null);
-    await ref.setSearchDescription?.(null).catch(() => null);
   }
 
   function chooseAsset(asset: AssetItem) {
@@ -521,26 +529,21 @@ function App() {
 
   async function importCsv(file: File | null) {
     if (!file) return;
-    const parsed = parseCsv(await file.text());
-    const imported = parsed.pages;
-    if (!imported.length) {
-      showToast("No valid rows found in the CSV.", "error");
+    const parsed = parseCsv(await file.text(), pages);
+    if (parsed.invalidRows.length) {
+      showToast(`${parsed.invalidRows.length} invalid CSV row${parsed.invalidRows.length === 1 ? "" : "s"} skipped.`, "error");
+    }
+    if (!parsed.rows.length) {
+      showToast("No matching Webflow page IDs found in the CSV.", "error");
       return;
     }
     setPages((current) => {
-      const next = [...current];
-      for (const row of imported) {
-        const index = next.findIndex(
-          (page) => page.id === row.id || page.name === row.name || (row.slug && page.slug === row.slug),
-        );
-        if (index >= 0) next[index] = { ...next[index], ...row, id: next[index].id };
-        else next.push(row);
-      }
-      return next;
+      const patches = new Map(parsed.rows.map((row) => [row.id, row.patch]));
+      return current.map((page) => (patches.has(page.id) ? { ...page, ...patches.get(page.id), id: page.id } : page));
     });
     if (importInputRef.current) importInputRef.current.value = "";
-    const skipped = parsed.invalidOgImageCount ? " " + parsed.invalidOgImageCount + " invalid OG image URL" + (parsed.invalidOgImageCount === 1 ? " was" : "s were") + " skipped." : "";
-    showToast(imported.length + " CSV row" + (imported.length === 1 ? "" : "s") + " imported." + skipped);
+    const skipped = parsed.skippedRows.length ? ` ${parsed.skippedRows.length} unmatched row${parsed.skippedRows.length === 1 ? "" : "s"} skipped.` : "";
+    showToast(`${parsed.rows.length} CSV row${parsed.rows.length === 1 ? "" : "s"} imported.${skipped}`);
   }
 
   function showToast(message: string, tone: ToastState["tone"] = "success") {
@@ -764,6 +767,15 @@ function App() {
         </div>
       )}
 
+      {saveReport && (
+        <SaveReportPanel
+          report={saveReport}
+          onRetry={() => savePages(saveReport.failed.map((item) => item.id))}
+          onDismiss={() => setSaveReport(null)}
+          isSaving={isSaving}
+        />
+      )}
+
     </div>
   );
 }
@@ -804,6 +816,47 @@ function PageListLoader() {
       {Array.from({ length: 7 }).map((_, index) => (
         <span key={index} />
       ))}
+    </div>
+  );
+}
+
+function SaveReportPanel({
+  report,
+  onRetry,
+  onDismiss,
+  isSaving,
+}: {
+  report: SaveReport;
+  onRetry: () => void;
+  onDismiss: () => void;
+  isSaving: boolean;
+}) {
+  const hasFailed = report.failed.length > 0;
+  return (
+    <div className={hasFailed ? "save-report error" : "save-report"} role={hasFailed ? "alert" : "status"}>
+      <div>
+        <strong>{hasFailed ? "Some pages were not saved" : "Save complete"}</strong>
+        <span>{buildSaveSummary(report)}</span>
+      </div>
+      {hasFailed && (
+        <div className="save-report-list">
+          {report.failed.slice(0, 4).map((item) => (
+            <small key={item.id}>
+              {item.name}: {item.message}
+            </small>
+          ))}
+        </div>
+      )}
+      <div className="save-report-actions">
+        {hasFailed && (
+          <button className="secondary-button" onClick={onRetry} disabled={isSaving}>
+            Retry failed pages
+          </button>
+        )}
+        <button className="ghost-button" onClick={onDismiss} disabled={isSaving}>
+          Dismiss
+        </button>
+      </div>
     </div>
   );
 }
@@ -1440,13 +1493,146 @@ function normalizeImageUrl(url: string) {
   return url.trim();
 }
 
+async function readPageMetadata(ref: WebflowPageRef): Promise<Partial<WebflowPageMetadata>> {
+  const usesTitleAsSearchTitle = (await ref.usesTitleAsSearchTitle?.()) ?? true;
+  const usesDescriptionAsSearchDescription = (await ref.usesDescriptionAsSearchDescription?.()) ?? true;
+  const usesTitleAsOpenGraphTitle = (await ref.usesTitleAsOpenGraphTitle?.()) ?? true;
+  const usesDescriptionAsOpenGraphDescription = (await ref.usesDescriptionAsOpenGraphDescription?.()) ?? true;
+  return {
+    title: (await ref.getTitle?.()) ?? "",
+    description: (await ref.getDescription?.()) ?? "",
+    usesTitleAsSearchTitle,
+    searchTitle: usesTitleAsSearchTitle ? "" : (await ref.getSearchTitle?.()) ?? "",
+    usesDescriptionAsSearchDescription,
+    searchDescription: usesDescriptionAsSearchDescription ? "" : (await ref.getSearchDescription?.()) ?? "",
+    usesTitleAsOpenGraphTitle,
+    openGraphTitle: usesTitleAsOpenGraphTitle ? "" : (await ref.getOpenGraphTitle?.()) ?? "",
+    usesDescriptionAsOpenGraphDescription,
+    openGraphDescription: usesDescriptionAsOpenGraphDescription ? "" : (await ref.getOpenGraphDescription?.()) ?? "",
+    openGraphImage: (await ref.getOpenGraphImage?.()) ?? "",
+  };
+}
+
+function buildPageMetadata(page: SeoPage, isExcludedFromSearch: boolean): Partial<WebflowPageMetadata> {
+  const title = page.seoTitle.trim();
+  const description = page.metaDescription.trim();
+  const metadata: Partial<WebflowPageMetadata> = {
+    title,
+    description,
+    usesTitleAsOpenGraphTitle: page.useSeoForOg,
+    usesDescriptionAsOpenGraphDescription: page.useSeoForOg,
+    openGraphImage: normalizeImageUrl(page.ogImage),
+  };
+
+  if (!isExcludedFromSearch) {
+    metadata.usesTitleAsSearchTitle = false;
+    metadata.searchTitle = title;
+    metadata.usesDescriptionAsSearchDescription = false;
+    metadata.searchDescription = description;
+  }
+
+  if (!page.useSeoForOg) {
+    metadata.openGraphTitle = page.ogTitle.trim();
+    metadata.openGraphDescription = page.ogDescription.trim();
+  }
+
+  return metadata;
+}
+
+async function savePageWithIndividualSetters(
+  ref: WebflowPageRef,
+  page: SeoPage,
+  metadata: Partial<WebflowPageMetadata>,
+) {
+  await withTimeout(ref.setTitle?.(metadata.title ?? "") ?? Promise.resolve(null), SAVE_TIMEOUT_MS, `Saving ${page.name} title timed out.`);
+  await withTimeout(
+    ref.setDescription?.(metadata.description ?? "") ?? Promise.resolve(null),
+    SAVE_TIMEOUT_MS,
+    `Saving ${page.name} description timed out.`,
+  );
+
+  if (metadata.usesTitleAsSearchTitle === false) {
+    await withTimeout(ref.useTitleAsSearchTitle?.(false) ?? Promise.resolve(null), SAVE_TIMEOUT_MS, `Saving ${page.name} search title mode timed out.`);
+    await withTimeout(ref.setSearchTitle?.(metadata.searchTitle ?? "") ?? Promise.resolve(null), SAVE_TIMEOUT_MS, `Saving ${page.name} search title timed out.`);
+  }
+
+  if (metadata.usesDescriptionAsSearchDescription === false) {
+    await withTimeout(
+      ref.useDescriptionAsSearchDescription?.(false) ?? Promise.resolve(null),
+      SAVE_TIMEOUT_MS,
+      `Saving ${page.name} search description mode timed out.`,
+    );
+    await withTimeout(
+      ref.setSearchDescription?.(metadata.searchDescription ?? "") ?? Promise.resolve(null),
+      SAVE_TIMEOUT_MS,
+      `Saving ${page.name} search description timed out.`,
+    );
+  }
+
+  await withTimeout(
+    ref.useTitleAsOpenGraphTitle?.(Boolean(metadata.usesTitleAsOpenGraphTitle)) ?? Promise.resolve(null),
+    SAVE_TIMEOUT_MS,
+    `Saving ${page.name} Open Graph title mode timed out.`,
+  );
+  await withTimeout(
+    ref.useDescriptionAsOpenGraphDescription?.(Boolean(metadata.usesDescriptionAsOpenGraphDescription)) ?? Promise.resolve(null),
+    SAVE_TIMEOUT_MS,
+    `Saving ${page.name} Open Graph description mode timed out.`,
+  );
+
+  if (!metadata.usesTitleAsOpenGraphTitle) {
+    await withTimeout(ref.setOpenGraphTitle?.(metadata.openGraphTitle ?? "") ?? Promise.resolve(null), SAVE_TIMEOUT_MS, `Saving ${page.name} Open Graph title timed out.`);
+  }
+
+  if (!metadata.usesDescriptionAsOpenGraphDescription) {
+    await withTimeout(
+      ref.setOpenGraphDescription?.(metadata.openGraphDescription ?? "") ?? Promise.resolve(null),
+      SAVE_TIMEOUT_MS,
+      `Saving ${page.name} Open Graph description timed out.`,
+    );
+  }
+
+  await withTimeout(ref.setOpenGraphImage?.(metadata.openGraphImage ?? "") ?? Promise.resolve(null), SAVE_TIMEOUT_MS, `Saving ${page.name} Open Graph image timed out.`);
+}
+
+async function restorePageMetadata(ref: WebflowPageRef, previousMetadata: Partial<WebflowPageMetadata>) {
+  if (ref.setMetadata) {
+    await withTimeout(ref.setMetadata(previousMetadata), SAVE_TIMEOUT_MS, "Restoring previous page metadata timed out.");
+    return;
+  }
+  await withTimeout(ref.setTitle?.(previousMetadata.title ?? "") ?? Promise.resolve(null), SAVE_TIMEOUT_MS, "Restoring page title timed out.");
+  await withTimeout(ref.setDescription?.(previousMetadata.description ?? "") ?? Promise.resolve(null), SAVE_TIMEOUT_MS, "Restoring page description timed out.");
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
+  });
+}
+
+function buildSaveSummary(report: SaveReport) {
+  const parts = [`${report.success.length} saved`];
+  if (report.failed.length) parts.push(`${report.failed.length} failed`);
+  if (report.skipped.length) parts.push(`${report.skipped.length} skipped`);
+  return parts.join(", ") + ".";
+}
+
 function renderTemplate(template: string, page: SeoPage) {
   return template.replace(/\{page\}/g, page.name).trim();
 }
 
 function isMissingSeoTitle(page: SeoPage) {
-  const title = normalizeComparableText(page.seoTitle);
-  return !title || title === normalizeComparableText(page.name);
+  return !page.seoTitle.trim();
 }
 
 function isMissingMetaDescription(page: SeoPage) {
@@ -1455,10 +1641,6 @@ function isMissingMetaDescription(page: SeoPage) {
 
 function isMissingSeoCopy(page: SeoPage) {
   return isMissingSeoTitle(page) || isMissingMetaDescription(page);
-}
-
-function normalizeComparableText(value: string) {
-  return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function selectedSaveLabel(count: number) {
@@ -1477,36 +1659,9 @@ function formatSlug(page: { slug: string; url: string }) {
   return page.url || "Page";
 }
 
-function mergeRefreshedPages(refreshedPages: SeoPage[], currentPages: SeoPage[]) {
-  const currentById = new Map(currentPages.map((page) => [page.id, page]));
-  return refreshedPages.map((page) => {
-    const current = currentById.get(page.id);
-    if (!current) return page;
-    return {
-      ...page,
-      seoTitle: current.seoTitle,
-      metaDescription: current.metaDescription,
-      ogTitle: current.ogTitle,
-      ogDescription: current.ogDescription,
-      ogImage: current.ogImage,
-      useSeoForOg: current.useSeoForOg,
-    };
-  });
-}
-
-function reconcileSelectedIds(
-  currentSelectedIds: string[],
-  previousPages: SeoPage[],
-  nextPages: SeoPage[],
-  preserveSelection: boolean,
-) {
-  if (!preserveSelection) return nextPages.map((page) => page.id);
+function reconcileSelectedIds(currentSelectedIds: string[], nextPages: SeoPage[]) {
   const nextIds = new Set(nextPages.map((page) => page.id));
-  const hadEveryPageSelected =
-    previousPages.length > 0 && previousPages.every((page) => currentSelectedIds.includes(page.id));
-  const nextSelectedIds = hadEveryPageSelected
-    ? nextPages.map((page) => page.id)
-    : currentSelectedIds.filter((id) => nextIds.has(id));
+  const nextSelectedIds = currentSelectedIds.filter((id) => nextIds.has(id));
   return arraysEqual(currentSelectedIds, nextSelectedIds) ? currentSelectedIds : nextSelectedIds;
 }
 
@@ -1674,41 +1829,75 @@ function toCsv(rows: SeoPage[]) {
   return [headers.join(","), ...rows.map((row) => headers.map((header) => escapeCsv(String(row[header as keyof SeoPage] ?? ""))).join(","))].join("\n");
 }
 
-function parseCsv(text: string): { pages: SeoPage[]; invalidOgImageCount: number } {
-  const lines = text.trim().split(/\r?\n/).filter(Boolean);
-  if (lines.length < 2) return { pages: [], invalidOgImageCount: 0 };
-  const headers = splitCsvLine(lines[0]);
-  let invalidOgImageCount = 0;
-  const pages = lines.slice(1).map((line, index) => {
-    const values = splitCsvLine(line);
-    const row = Object.fromEntries(headers.map((header, valueIndex) => [header, values[valueIndex] ?? ""]));
-    const rawOgImage = String(row.ogImage || "").trim();
-    const ogImage = validateImageUrl(rawOgImage).valid ? rawOgImage : "";
-    if (rawOgImage && !ogImage) invalidOgImageCount += 1;
-    return {
-      id: row.id || `csv-${index}-${row.name || row.slug || "page"}`,
-      name: row.name || "Untitled page",
-      slug: row.slug || "",
-      url: row.url || "",
-      groupLabel: row.groupLabel || "Imported pages",
-      seoTitle: row.seoTitle || "",
-      metaDescription: row.metaDescription || "",
-      ogTitle: row.ogTitle || "",
-      ogDescription: row.ogDescription || "",
-      ogImage,
-      useSeoForOg: ["true", "1", "yes", ""].includes(String(row.useSeoForOg ?? "true").toLowerCase()),
-    };
+function parseCsv(text: string, currentPages: SeoPage[]): CsvImportResult {
+  const table = parseCsvTable(text);
+  const [headers = [], ...rows] = table;
+  const normalizedHeaders = headers.map((header) => header.trim());
+  const allowedHeaders = new Set(["id", "name", "slug", "url", "groupLabel", "seoTitle", "metaDescription", "ogTitle", "ogDescription", "ogImage", "useSeoForOg"]);
+  const result: CsvImportResult = { rows: [], invalidRows: [], skippedRows: [] };
+  if (!normalizedHeaders.includes("id")) {
+    result.invalidRows.push("Missing required id column.");
+    return result;
+  }
+
+  const unsupportedHeaders = normalizedHeaders.filter((header) => header && !allowedHeaders.has(header));
+  if (unsupportedHeaders.length) {
+    result.invalidRows.push(`Unsupported columns: ${unsupportedHeaders.join(", ")}`);
+    return result;
+  }
+
+  const pagesById = new Map(currentPages.map((page) => [page.id, page]));
+  const seenIds = new Set<string>();
+  rows.forEach((values, rowIndex) => {
+    if (!values.some((value) => value.trim())) return;
+    const row = Object.fromEntries(normalizedHeaders.map((header, valueIndex) => [header, values[valueIndex] ?? ""]));
+    const id = String(row.id ?? "").trim();
+    if (!id) {
+      result.invalidRows.push(`Row ${rowIndex + 2}: missing page id.`);
+      return;
+    }
+    if (seenIds.has(id)) {
+      result.invalidRows.push(`Row ${rowIndex + 2}: duplicate page id.`);
+      return;
+    }
+    seenIds.add(id);
+    if (!pagesById.has(id)) {
+      result.skippedRows.push(`Row ${rowIndex + 2}: unmatched page id.`);
+      return;
+    }
+
+    const patch: Partial<SeoPage> = {};
+    for (const header of normalizedHeaders) {
+      if (["id", "name", "slug", "url", "groupLabel"].includes(header) || !(header in row)) continue;
+      const value = String(row[header] ?? "");
+      if (header === "ogImage") {
+        const validation = validateImageUrl(value);
+        if (!validation.valid) {
+          result.invalidRows.push(`Row ${rowIndex + 2}: ${validation.error ?? "Invalid Open Graph image URL."}`);
+          return;
+        }
+      }
+      if (header === "useSeoForOg") {
+        patch.useSeoForOg = ["true", "1", "yes"].includes(value.trim().toLowerCase());
+      } else if (header) {
+        patch[header as keyof SeoPage] = value as never;
+      }
+    }
+
+    result.rows.push({ id, patch });
   });
-  return { pages, invalidOgImageCount };
+
+  return result;
 }
 
-function splitCsvLine(line: string) {
-  const cells: string[] = [];
+function parseCsvTable(text: string) {
+  const rows: string[][] = [];
+  let cells: string[] = [];
   let value = "";
   let quoted = false;
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    const next = line[index + 1];
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
     if (char === '"' && quoted && next === '"') {
       value += '"';
       index += 1;
@@ -1717,16 +1906,24 @@ function splitCsvLine(line: string) {
     } else if (char === "," && !quoted) {
       cells.push(value);
       value = "";
+    } else if ((char === "\n" || char === "\r") && !quoted) {
+      if (char === "\r" && next === "\n") index += 1;
+      cells.push(value);
+      rows.push(cells);
+      cells = [];
+      value = "";
     } else {
       value += char;
     }
   }
   cells.push(value);
-  return cells;
+  if (cells.length > 1 || cells[0].trim()) rows.push(cells);
+  return rows;
 }
 
 function escapeCsv(value: string) {
-  return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+  const safeValue = /^[=+\-@]/.test(value) ? `'${value}` : value;
+  return /[",\n\r]/.test(safeValue) ? `"${safeValue.replace(/"/g, '""')}"` : safeValue;
 }
 
 function downloadFile(filename: string, contents: string) {
